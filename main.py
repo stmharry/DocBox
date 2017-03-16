@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 
-import datetime
-import itertools
-import mailmerge
+import os
 import pyodbc
 import pandas as pd
 
+from configobj import ConfigObj
+from datetime import datetime
+from itertools import zip_longest
+from mailmerge import MailMerge
 
 class Record(dict):
     @staticmethod
@@ -20,7 +22,7 @@ class Record(dict):
         super(Record, self).__init__(*args, **kwargs)
 
         if self['發文日期'] is None:
-            year = datetime.datetime.now().year
+            year = datetime.now().year
             month = None
             day = None
         else:
@@ -43,7 +45,13 @@ class Record(dict):
         self['說明文件號'] = self['說明文件號'] or ''
 
         #
+        if self['說明文件'] in ['簽文']:
+            self.header = '創 先簽後稿'
+        else:
+            self.header = '創 以稿代簽'
 
+        self.archive_code = self.format('{發文年份:d}/020411')
+        self.archive_years = '3'
         self.doc_date = self.format('{民國發文日期:s}')
 
         if self['發文號'] == 0:
@@ -67,7 +75,7 @@ def get_field_dict(records):
     field_dicts = []
     for (num, (record0, record1)) in enumerate(records):
         if record1 is None:
-            header = record0['姓名'] + '1員'
+            representation = record0['姓名'] + '1員'
             field_dict = {
                 'FIELD_0': [
                     {'FIELD_0': record0.title},
@@ -85,9 +93,9 @@ def get_field_dict(records):
             }
         else:
             if record0['姓名'] == record1['姓名']:
-                header = record0['姓名'] + '1員'
+                representation = record0['姓名'] + '1員'
             else:
-                header = record0['姓名'] + '等2員'
+                representation = record0['姓名'] + '等2員'
 
             field_dict = {
                 'FIELD_0': [],
@@ -114,9 +122,12 @@ def get_field_dict(records):
             }
 
         field_dict.update({
+            'HEADER': record0.header,
+            'ARCHIVE_CODE': record0.archive_code,
+            'ARCHIVE_YEARS': record0.archive_years,
             'DOC_DATE': record0.doc_date,
             'DOC_NUMBER': record0.doc_number,
-            'HEADER': header,
+            'REPRESENTATION': representation,
             'NOTE': record0.note,
             'NUM_PAGE': num,
         })
@@ -138,12 +149,14 @@ def get_field_dict(records):
 
     return field_dicts
 
+config = ConfigObj('config.cfg')
+if not os.path.isdir(config['輸出資料夾']):
+    os.makedirs(config['輸出資料夾'])
 
 connection = pyodbc.connect(
     driver='{Microsoft Access Driver (*.mdb, *.accdb)}',
-    dbq=r'\\隊本部收發\收發\公文附件\銘進\獎懲輸入\獎懲.accdb',
+    dbq=config['資料庫'],
 )
-
 
 df = pd.read_sql(
     'select * from 列印查詢',
@@ -157,9 +170,18 @@ for (case_key, case_indices) in cases.items():
     case_df = df.loc[case_indices]
     case_records = [Record(row) for (index, row) in case_df.iterrows()]
 
-    doc_records = list(itertools.zip_longest(*[iter(case_records)] * 2))
+    doc_records = list(zip_longest(*[iter(case_records)] * 2))
     field_dicts = get_field_dict(doc_records)
 
-    document = mailmerge.MailMerge('doc/template.docx')
+    document = MailMerge('doc/template.docx')
     document.merge_pages(field_dicts)
-    document.write('doc/{:d}.docx'.format(case_key))
+    document_path = os.path.join(
+        config['輸出資料夾'],
+        '{:d}_{:s}.docx'.format(
+            case_key,
+            case_records[0]['事由'],
+        ),
+    )
+    document.write(document_path)
+
+    print(document_path)
