@@ -125,6 +125,8 @@ def get_field_dict(records):
             'HEADER': record0.header,
             'ARCHIVE_CODE': record0.archive_code,
             'ARCHIVE_YEARS': record0.archive_years,
+            'DRAFT': '（稿）',
+            'RECIPIENT': '如正本',
             'DOC_DATE': record0.doc_date,
             'DOC_NUMBER': record0.doc_number,
             'REPRESENTATION': representation,
@@ -134,15 +136,29 @@ def get_field_dict(records):
 
         if num == len(records) - 1:
             field_dict.update({
-                'FOOTER_0': [
-                    {'FOOTER_0': '第一層決行', 'FOOTER_1': '', 'FOOTER_2': ''},
-                    {'FOOTER_0': '承辦單位', 'FOOTER_1': '核稿', 'FOOTER_2': '批示'},
-                    {'FOOTER_0': '擬：稿擬發。', 'FOOTER_1': '', 'FOOTER_2': ''},
+                'FOOTER_0': '大隊長 李ＯＯ',
+                'FOOTER_10': [
+                    {
+                        'FOOTER_10': '第一層決行',
+                        'FOOTER_11': '',
+                        'FOOTER_12': '',
+                    },
+                    {
+                        'FOOTER_10': '承辦單位',
+                        'FOOTER_11': '核稿',
+                        'FOOTER_12': '批示',
+                    },
+                    {
+                        'FOOTER_10': '擬：稿擬發。',
+                        'FOOTER_11': '',
+                        'FOOTER_12': '',
+                    },
                 ],
             })
         else:
             field_dict.update({
                 'FOOTER_0': [],
+                'FOOTER_10': [],
             })
 
         field_dicts.append(field_dict)
@@ -173,7 +189,7 @@ for (case_key, case_indices) in cases.items():
     doc_records = list(zip_longest(*[iter(case_records)] * 2))
     field_dicts = get_field_dict(doc_records)
 
-    document = MailMerge('doc/template.docx')
+    document = MailMerge('doc/draft.docx')
     document.merge_pages(field_dicts)
     document_path = os.path.join(
         config['輸出資料夾'],
