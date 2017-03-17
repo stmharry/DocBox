@@ -15,8 +15,8 @@ class Record(dict):
     def ROC_date(year, month=None, day=None):
         return '中華民國{}年{}月{}日'.format(
             year - 1911,
-            month or '  ',
-            day or '  ',
+            month or '   ',
+            day or '   ',
         )
 
     def __init__(self, *args, **kwargs):
@@ -46,6 +46,7 @@ class Record(dict):
         self['說明文件號'] = self['說明文件號'] or ''
 
         #
+        self.doc_serial = self['案件編號']
         if self['說明文件'] in ['簽文']:
             self.header = '創 先簽後稿'
         else:
@@ -152,6 +153,7 @@ class MailMerge(object):
             if format == MailMerge.DRAFT:
                 mergefield = mergefield_base.copy()
                 mergefield.update({
+                    'DOC_SERIAL': record_batch[0].doc_serial,
                     'HEADER': record_batch[0].header,
                     'ARCHIVE_CODE': record_batch[0].archive_code,
                     'ARCHIVE_YEARS': record_batch[0].archive_years,
