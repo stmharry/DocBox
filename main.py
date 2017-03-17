@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 
 import os
+import mailmerge
 import pyodbc
 import pandas as pd
 
 from configobj import ConfigObj
 from datetime import datetime
 from itertools import zip_longest
-from mailmerge import MailMerge
+
 
 class Record(dict):
     @staticmethod
@@ -71,99 +72,149 @@ class Record(dict):
         return s.format(**self)
 
 
-def get_field_dict(records):
-    field_dicts = []
-    for (num, (record0, record1)) in enumerate(records):
-        if record1 is None:
-            representation = record0['姓名'] + '1員'
-            field_dict = {
-                'FIELD_0': [
-                    {'FIELD_0': record0.title},
-                ],
-                'FIELD_10': [
-                    {'FIELD_10': '一、', 'FIELD_11': record0.position},
-                    {'FIELD_10': '二、', 'FIELD_11': record0.result},
-                    {'FIELD_10': '三、', 'FIELD_11': record0.subject},
-                    {'FIELD_10': '四、', 'FIELD_11': record0.rule},
-                    {'FIELD_10': '五、', 'FIELD_11': record0.other},
-                ],
-                'FIELD_20': [],
-                'FIELD_30': [],
-                'FIELD_40': [],
-            }
-        else:
-            if record0['姓名'] == record1['姓名']:
-                representation = record0['姓名'] + '1員'
+class MailMerge(object):
+    DRAFT = 0
+    FORMAL = 1
+
+    def __init__(self, file, root_dir):
+        self.file = file
+        self.root_dir = root_dir
+
+        self.word = None
+        self.word_path = None
+
+    def merge_records(self, records, format):
+        record_batches = list(zip_longest(*[iter(records)] * 2))
+
+        mergefields = []
+        for (num, record_batch) in enumerate(record_batches):
+            if record_batch[1] is None:
+                num_people = 1
+                mergefield_base = {
+                    'FIELD_0': [
+                        {'FIELD_0': record_batch[0].title},
+                    ],
+                    'FIELD_10': [
+                        {'FIELD_10': '一、', 'FIELD_11': record_batch[0].position},
+                        {'FIELD_10': '二、', 'FIELD_11': record_batch[0].result},
+                        {'FIELD_10': '三、', 'FIELD_11': record_batch[0].subject},
+                        {'FIELD_10': '四、', 'FIELD_11': record_batch[0].rule},
+                        {'FIELD_10': '五、', 'FIELD_11': record_batch[0].other},
+                    ],
+                    'FIELD_20': [],
+                    'FIELD_30': [],
+                    'FIELD_40': [],
+                }
             else:
-                representation = record0['姓名'] + '等2員'
+                if record_batch[0]['姓名'] == record_batch[1]['姓名']:
+                    num_people = 1
+                else:
+                    num_people = 2
 
-            field_dict = {
-                'FIELD_0': [],
-                'FIELD_10': [
-                    {'FIELD_10': '一、', 'FIELD_11': record0.title},
-                ],
-                'FIELD_20': [
-                    {'FIELD_20': '(一)', 'FIELD_21': record0.position},
-                    {'FIELD_20': '(二)', 'FIELD_21': record0.result},
-                    {'FIELD_20': '(三)', 'FIELD_21': record0.subject},
-                    {'FIELD_20': '(四)', 'FIELD_21': record0.rule},
-                    {'FIELD_20': '(五)', 'FIELD_21': record0.other},
-                ],
-                'FIELD_30': [
-                    {'FIELD_30': '二、', 'FIELD_31': record1.title},
-                ],
-                'FIELD_40': [
-                    {'FIELD_40': '(一)', 'FIELD_41': record1.position},
-                    {'FIELD_40': '(二)', 'FIELD_41': record1.result},
-                    {'FIELD_40': '(三)', 'FIELD_41': record1.subject},
-                    {'FIELD_40': '(四)', 'FIELD_41': record1.rule},
-                    {'FIELD_40': '(五)', 'FIELD_41': record1.other},
-                ],
-            }
+                mergefield_base = {
+                    'FIELD_0': [],
+                    'FIELD_10': [
+                        {'FIELD_10': '一、', 'FIELD_11': record_batch[0].title},
+                    ],
+                    'FIELD_20': [
+                        {'FIELD_20': '(一)', 'FIELD_21': record_batch[0].position},
+                        {'FIELD_20': '(二)', 'FIELD_21': record_batch[0].result},
+                        {'FIELD_20': '(三)', 'FIELD_21': record_batch[0].subject},
+                        {'FIELD_20': '(四)', 'FIELD_21': record_batch[0].rule},
+                        {'FIELD_20': '(五)', 'FIELD_21': record_batch[0].other},
+                    ],
+                    'FIELD_30': [
+                        {'FIELD_30': '二、', 'FIELD_31': record_batch[1].title},
+                    ],
+                    'FIELD_40': [
+                        {'FIELD_40': '(一)', 'FIELD_41': record_batch[1].position},
+                        {'FIELD_40': '(二)', 'FIELD_41': record_batch[1].result},
+                        {'FIELD_40': '(三)', 'FIELD_41': record_batch[1].subject},
+                        {'FIELD_40': '(四)', 'FIELD_41': record_batch[1].rule},
+                        {'FIELD_40': '(五)', 'FIELD_41': record_batch[1].other},
+                    ],
+                }
 
-        field_dict.update({
-            'HEADER': record0.header,
-            'ARCHIVE_CODE': record0.archive_code,
-            'ARCHIVE_YEARS': record0.archive_years,
-            'DRAFT': '（稿）',
-            'RECIPIENT': '如正本',
-            'DOC_DATE': record0.doc_date,
-            'DOC_NUMBER': record0.doc_number,
-            'REPRESENTATION': representation,
-            'NOTE': record0.note,
-            'NUM_PAGE': num,
-        })
+            if num_people == 1:
+                representation = record_batch[0]['姓名'] + '1員'
+            elif num_people == 2:
+                representation = record_batch[0]['姓名'] + '等2員'
+            else:
+                representation = None
 
-        if num == len(records) - 1:
-            field_dict.update({
-                'FOOTER_0': '大隊長 李ＯＯ',
-                'FOOTER_10': [
-                    {
-                        'FOOTER_10': '第一層決行',
-                        'FOOTER_11': '',
-                        'FOOTER_12': '',
-                    },
-                    {
-                        'FOOTER_10': '承辦單位',
-                        'FOOTER_11': '核稿',
-                        'FOOTER_12': '批示',
-                    },
-                    {
-                        'FOOTER_10': '擬：稿擬發。',
-                        'FOOTER_11': '',
-                        'FOOTER_12': '',
-                    },
-                ],
-            })
-        else:
-            field_dict.update({
-                'FOOTER_0': [],
-                'FOOTER_10': [],
+            mergefield_base.update({
+                'DOC_DATE': record_batch[0].doc_date,
+                'DOC_NUMBER': record_batch[0].doc_number,
+                'REPRESENTATION': representation,
+                'NOTE': record_batch[0].note,
             })
 
-        field_dicts.append(field_dict)
+            if format == MailMerge.DRAFT:
+                mergefield = mergefield_base.copy()
+                mergefield.update({
+                    'HEADER': record_batch[0].header,
+                    'ARCHIVE_CODE': record_batch[0].archive_code,
+                    'ARCHIVE_YEARS': record_batch[0].archive_years,
+                    'DRAFT': '（稿）',
+                    'RECIPIENT': '如正本',
+                })
 
-    return field_dicts
+                if num == len(record_batches) - 1:
+                    mergefield.update({
+                        'FOOTER_0': '大隊長 李ＯＯ',
+                        'FOOTER_10': [
+                            {
+                                'FOOTER_10': '第一層決行',
+                                'FOOTER_11': '',
+                                'FOOTER_12': '',
+                            },
+                            {
+                                'FOOTER_10': '承辦單位',
+                                'FOOTER_11': '核稿',
+                                'FOOTER_12': '批示',
+                            },
+                            {
+                                'FOOTER_10': '擬：稿擬發。',
+                                'FOOTER_11': '',
+                                'FOOTER_12': '',
+                            },
+                        ],
+                    })
+                else:
+                    mergefield.update({
+                        'FOOTER_0': [],
+                        'FOOTER_10': [],
+                    })
+
+                mergefields.append(mergefield)
+
+            elif format == MailMerge.FORMAL:
+                for num_person in range(num_people):
+                    record = record_batch[num_person]
+                    mergefield = mergefield_base.copy()
+                    mergefield.update({
+                        'HEADER': '',
+                        'ARCHIVE_CODE': '',
+                        'ARCHIVE_YEARS': '',
+                        'DRAFT': '',
+                        'RECIPIENT': record['姓名'],
+                    })
+                    mergefields.append(mergefield)
+
+        self.word = mailmerge.MailMerge(self.file)
+        self.word.merge_pages(mergefields)
+        self.word_path = os.path.join(
+            self.root_dir,
+            '{:d}_{:s}.docx'.format(
+                records[0]['案件編號'],
+                records[0]['事由'],
+            ),
+        )
+        print(self.word_path)
+
+    def write(self):
+        self.word.write(self.word_path)
+
 
 config = ConfigObj('config.cfg')
 if not os.path.isdir(config['輸出資料夾']):
@@ -175,7 +226,14 @@ connection = pyodbc.connect(
 )
 
 df = pd.read_sql(
-    'select * from 列印查詢',
+    (
+        'SELECT * FROM 列印查詢 '
+        'WHERE 案件編號 BETWEEN ? AND ?'
+    ),
+    params=[
+        config['案件編號'][0],
+        config['案件編號'][1],
+    ],
     con=connection,
     index_col='識別碼',
     parse_dates=True,
@@ -186,18 +244,9 @@ for (case_key, case_indices) in cases.items():
     case_df = df.loc[case_indices]
     case_records = [Record(row) for (index, row) in case_df.iterrows()]
 
-    doc_records = list(zip_longest(*[iter(case_records)] * 2))
-    field_dicts = get_field_dict(doc_records)
-
-    document = MailMerge('doc/draft.docx')
-    document.merge_pages(field_dicts)
-    document_path = os.path.join(
-        config['輸出資料夾'],
-        '{:d}_{:s}.docx'.format(
-            case_key,
-            case_records[0]['事由'],
-        ),
+    document = MailMerge(
+        file='doc/template.docx',
+        root_dir=config['輸出資料夾'],
     )
-    document.write(document_path)
-
-    print(document_path)
+    document.merge_records(case_records, MailMerge.DRAFT)
+    document.write()
