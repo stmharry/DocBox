@@ -13,7 +13,7 @@ from itertools import zip_longest
 class Record(dict):
     @staticmethod
     def ROC_date(year, month=None, day=None):
-        return '中華民國{}年{}月{}日'.format(
+        return '{}年{}月{}日'.format(
             year - 1911,
             month or '   ',
             day or '   ',
@@ -46,7 +46,7 @@ class Record(dict):
         self['說明文件號'] = self['說明文件號'] or ''
 
         #
-        self.doc_serial = self['案件編號']
+        self.doc_serial = self.format('#{案件編號:d}')
         if self['說明文件'] in ['簽文']:
             self.header = '創 先簽後稿'
         else:
@@ -54,7 +54,7 @@ class Record(dict):
 
         self.archive_code = self.format('{發文年份:d}/020411')
         self.archive_years = '3'
-        self.doc_date = self.format('{民國發文日期:s}')
+        self.doc_date = self.format('中華民國{民國發文日期:s}')
 
         if self['發文號'] == 0:
             self.doc_number = self.format('保七三大人字第{發文年份:d}000     號')
@@ -199,7 +199,7 @@ class MailMerge(object):
                         'ARCHIVE_CODE': '',
                         'ARCHIVE_YEARS': '',
                         'DRAFT': '',
-                        'RECIPIENT': record['姓名'],
+                        '   RECIPIENT': record['姓名'],
                     })
                     mergefields.append(mergefield)
 
