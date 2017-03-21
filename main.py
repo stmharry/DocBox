@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 
 import os
-import mailmerge
 import pyodbc
 import pandas as pd
 
+from comtypes.client import CreateObject
 from configobj import ConfigObj
 from datetime import datetime
 from itertools import zip_longest
+from mailmerge import MailMerge
 
 
 class Record(dict):
@@ -73,16 +74,13 @@ class Record(dict):
         return s.format(**self)
 
 
-class MailMerge(object):
+class WordMerge(object):
     DRAFT = 0
     FORMAL = 1
 
-    def __init__(self, file, root_dir):
-        self.file = file
-        self.root_dir = root_dir
-
-        self.word = None
-        self.word_path = None
+    def __init__(self, template_path, output_dir):
+        self.template_path = template_path
+        self.output_dir = output_dir
 
     def merge_records(self, records, format):
         record_batches = list(zip_longest(*[iter(records)] * 2))
@@ -150,7 +148,7 @@ class MailMerge(object):
                 'NOTE': record_batch[0].note,
             })
 
-            if format == MailMerge.DRAFT:
+            if format == WordMerge.DRAFT:
                 mergefield = mergefield_base.copy()
                 mergefield.update({
                     'DOC_SERIAL': record_batch[0].doc_serial,
@@ -190,7 +188,7 @@ class MailMerge(object):
 
                 mergefields.append(mergefield)
 
-            elif format == MailMerge.FORMAL:
+            elif format == WordMerge.FORMAL:
                 for num_person in range(num_people):
                     record = record_batch[num_person]
                     mergefield = mergefield_base.copy()
@@ -199,56 +197,62 @@ class MailMerge(object):
                         'ARCHIVE_CODE': '',
                         'ARCHIVE_YEARS': '',
                         'DRAFT': '',
-                        '   RECIPIENT': record['姓名'],
+                        'RECIPIENT': record['姓名'],
                     })
                     mergefields.append(mergefield)
 
-        self.word = mailmerge.MailMerge(self.file)
-        self.word.merge_pages(mergefields)
-        self.word_path = os.path.join(
-            self.root_dir,
-            '{:d}_{:s}.docx'.format(
+        path_prefix = os.path.join(
+            self.output_dir,
+            '{:d}_{:s}'.format(
                 records[0]['案件編號'],
                 records[0]['事由'],
             ),
         )
-        print(self.word_path)
+        word_path = '{:s}.docx'.format(path_prefix)
+        pdf_path = '{:s}.pdf'.format(path_prefix)
 
-    def write(self):
-        self.word.write(self.word_path)
+        word_template = MailMerge(self.template_path)
+        word_template.merge_pages(mergefields)
+        word_template.write(word_path)
+
+        word_document = word_app.Documents.open(word_path)
+        word_document.SaveAs(pdf_path, FileFormat=17)  # magic 17
+
+        print(path_prefix)
 
 
-config = ConfigObj('config.cfg')
-if not os.path.isdir(config['輸出資料夾']):
-    os.makedirs(config['輸出資料夾'])
+if __name__ == '__main__':
+    config = ConfigObj('config.cfg')
+    if not os.path.isdir(config['輸出資料夾']):
+        os.makedirs(config['輸出資料夾'])
+    word_app = CreateObject('Word.Application')
 
-connection = pyodbc.connect(
-    driver='{Microsoft Access Driver (*.mdb, *.accdb)}',
-    dbq=config['資料庫'],
-)
-
-df = pd.read_sql(
-    (
-        'SELECT * FROM 列印查詢 '
-        'WHERE 案件編號 BETWEEN ? AND ?'
-    ),
-    params=[
-        config['案件編號'][0],
-        config['案件編號'][1],
-    ],
-    con=connection,
-    index_col='識別碼',
-    parse_dates=True,
-)
-
-cases = df.groupby('案件編號').groups
-for (case_key, case_indices) in cases.items():
-    case_df = df.loc[case_indices]
-    case_records = [Record(row) for (index, row) in case_df.iterrows()]
-
-    document = MailMerge(
-        file='doc/template.docx',
-        root_dir=config['輸出資料夾'],
+    connection = pyodbc.connect(
+        driver='{Microsoft Access Driver (*.mdb, *.accdb)}',
+        dbq=config['資料庫'],
     )
-    document.merge_records(case_records, MailMerge.DRAFT)
-    document.write()
+
+    df = pd.read_sql(
+        (
+            'SELECT * FROM 列印查詢 '
+            'WHERE 案件編號 BETWEEN ? AND ?'
+        ),
+        params=[
+            config['案件編號'][0],
+            config['案件編號'][1],
+        ],
+        con=connection,
+        index_col='識別碼',
+        parse_dates=True,
+    )
+
+    cases = df.groupby('案件編號').groups
+    for (case_key, case_indices) in cases.items():
+        case_df = df.loc[case_indices]
+        case_records = [Record(row) for (index, row) in case_df.iterrows()]
+
+        document = WordMerge(
+            template_path=config['模板'],
+            output_dir=config['輸出資料夾'],
+        )
+        document.merge_records(case_records, WordMerge.FORMAL)
