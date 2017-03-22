@@ -81,8 +81,18 @@ class WordMerge(object):
     def __init__(self, template_path, output_dir):
         self.template_path = template_path
         self.output_dir = output_dir
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
 
-    def merge_records(self, records, format):
+    def __enter__(self):
+        self.word_app = CreateObject('word.application')
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.word_app.quit()
+
+    @staticmethod
+    def get_mergefields(records, format):
         record_batches = list(zip_longest(*[iter(records)] * 2))
         num_batches = len(record_batches)
 
@@ -204,12 +214,12 @@ class WordMerge(object):
                     })
                     mergefields.append(mergefield)
 
+        return mergefields
+
+    def merge(self, mergefields, filename):
         path_prefix = os.path.join(
             self.output_dir,
-            '{:d}_{:s}'.format(
-                records[0]['案件編號'],
-                records[0]['事由'],
-            ),
+            filename,
         )
         word_path = '{:s}.docx'.format(path_prefix)
         pdf_path = '{:s}.pdf'.format(path_prefix)
@@ -218,17 +228,13 @@ class WordMerge(object):
         word_template.merge_pages(mergefields)
         word_template.write(word_path)
 
-        word_document = word_app.Documents.open(word_path)
-        word_document.SaveAs(pdf_path, FileFormat=17)  # magic 17
-
-        print(path_prefix)
+        word_document = self.word_app.documents.open(word_path)
+        word_document.SaveAs(pdf_path, FileFormat=17)  # magic 17 as pdf
+        word_document.close()
 
 
 if __name__ == '__main__':
     config = ConfigObj('config.cfg')
-    if not os.path.isdir(config['輸出資料夾']):
-        os.makedirs(config['輸出資料夾'])
-    word_app = CreateObject('Word.Application')
 
     connection = pyodbc.connect(
         driver='{Microsoft Access Driver (*.mdb, *.accdb)}',
@@ -249,15 +255,16 @@ if __name__ == '__main__':
         parse_dates=True,
     )
 
-    cases = df.groupby('案件編號').groups
-    for (case_key, case_indices) in cases.items():
-        case_df = df.loc[case_indices]
-        case_records = [Record(row) for (index, row) in case_df.iterrows()]
+    document = WordMerge(
+        template_path=config['模板'],
+        output_dir=config['輸出資料夾'],
+    )
 
-        document = WordMerge(
-            template_path=config['模板'],
-            output_dir=config['輸出資料夾'],
-        )
-        document.merge_records(case_records, WordMerge.DRAFT)
+    with document:
+        cases = df.groupby('案件編號').groups
+        for (case_key, case_indices) in cases.items():
+            case_df = df.loc[case_indices]
+            case_records = [Record(row) for (index, row) in case_df.iterrows()]
 
-    word_app.Quit()
+            mergefields = WordMerge.get_mergefields(case_records, format=WordMerge.DRAFT)
+            document.merge(mergefields, filename='')
