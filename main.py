@@ -84,9 +84,10 @@ class WordMerge(object):
 
     def merge_records(self, records, format):
         record_batches = list(zip_longest(*[iter(records)] * 2))
+        num_batches = len(record_batches)
 
         mergefields = []
-        for (num, record_batch) in enumerate(record_batches):
+        for (num_batch, record_batch) in enumerate(record_batches):
             if record_batch[1] is None:
                 num_people = 1
                 mergefield_base = {
@@ -146,6 +147,8 @@ class WordMerge(object):
                 'DOC_NUMBER': record_batch[0].doc_number,
                 'REPRESENTATION': representation,
                 'NOTE': record_batch[0].note,
+                'NUM_PAGE': str(num_batch + 1),
+                'NUM_PAGES': str(num_batches),
             })
 
             if format == WordMerge.DRAFT:
@@ -159,7 +162,7 @@ class WordMerge(object):
                     'RECIPIENT': '如正本',
                 })
 
-                if num == len(record_batches) - 1:
+                if num_batch == len(record_batches) - 1:
                     mergefield.update({
                         'FOOTER_0': '大隊長 李ＯＯ',
                         'FOOTER_10': [
@@ -255,4 +258,6 @@ if __name__ == '__main__':
             template_path=config['模板'],
             output_dir=config['輸出資料夾'],
         )
-        document.merge_records(case_records, WordMerge.FORMAL)
+        document.merge_records(case_records, WordMerge.DRAFT)
+
+    word_app.Quit()
