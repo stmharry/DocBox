@@ -11,7 +11,7 @@ from itertools import zip_longest
 from mailmerge import MailMerge
 
 
-class Record(dict):
+class Record(object):
     @staticmethod
     def ROC_date(year, month=None, day=None):
         return '{}年{}月{}日'.format(
@@ -20,35 +20,35 @@ class Record(dict):
             day or '   ',
         )
 
-    def __init__(self, *args, **kwargs):
-        super(Record, self).__init__(*args, **kwargs)
+    def __init__(self, series):
+        self.dict_ = dict(zip(series.index, series))
 
-        if self['發文日期'] is None:
+        if self.dict_['發文日期'] is None:
             year = datetime.now().year
             month = None
             day = None
         else:
-            year = self['發文日期'].year
-            month = self['發文日期'].month
-            day = self['發文日期'].day
+            year = self.dict_['發文日期'].year
+            month = self.dict_['發文日期'].month
+            day = self.dict_['發文日期'].day
 
-        self['發文年份'] = year - 1911
-        self['民國發文日期'] = Record.ROC_date(
+        self.dict_['發文年份'] = year - 1911
+        self.dict_['民國發文日期'] = Record.ROC_date(
             year=year,
             month=month,
             day=day,
         )
 
-        self['民國說明日期'] = Record.ROC_date(
-            year=self['說明日期'].year,
-            month=self['說明日期'].month,
-            day=self['說明日期'].day,
+        self.dict_['民國說明日期'] = Record.ROC_date(
+            year=self.dict_['說明日期'].year,
+            month=self.dict_['說明日期'].month,
+            day=self.dict_['說明日期'].day,
         )
-        self['說明文件號'] = self['說明文件號'] or ''
+        self.dict_['說明文件號'] = self.dict_['說明文件號'] or ''
 
         #
         self.doc_serial = self.format('#{案件編號:d}')
-        if self['說明文件'] in ['簽文']:
+        if self.dict_['說明文件'] in ['簽文']:
             self.header = '創 先簽後稿'
         else:
             self.header = '創 以稿代簽'
@@ -57,7 +57,7 @@ class Record(dict):
         self.archive_years = '3'
         self.doc_date = self.format('中華民國{民國發文日期:s}')
 
-        if self['發文號'] == 0:
+        if self.dict_['發文號'] == 0:
             self.doc_number = self.format('保七三大人字第{發文年份:d}000     號')
         else:
             self.doc_number = self.format('保七三大人字第{發文年份:d}{發文號:07d}號')
@@ -71,7 +71,7 @@ class Record(dict):
         self.note = self.format('依據{說明單位:s}{民國說明日期:s}{說明文件號:s}{說明文件:s}辦理。')
 
     def format(self, s):
-        return s.format(**self)
+        return s.format(**self.dict_)
 
 
 class WordMerge(object):
@@ -100,6 +100,7 @@ class WordMerge(object):
         for (num_batch, record_batch) in enumerate(record_batches):
             if record_batch[1] is None:
                 num_people = 1
+
                 mergefield_base = {
                     'FIELD_0': [
                         {'FIELD_0': record_batch[0].title},
@@ -116,7 +117,7 @@ class WordMerge(object):
                     'FIELD_40': [],
                 }
             else:
-                if record_batch[0]['姓名'] == record_batch[1]['姓名']:
+                if record_batch[0].dict_['姓名'] == record_batch[1].dict_['姓名']:
                     num_people = 1
                 else:
                     num_people = 2
@@ -146,11 +147,9 @@ class WordMerge(object):
                 }
 
             if num_people == 1:
-                representation = record_batch[0]['姓名'] + '1員'
-            elif num_people == 2:
-                representation = record_batch[0]['姓名'] + '等2員'
+                representation = record_batch[0].dict_['姓名'] + '1員'
             else:
-                representation = None
+                representation = record_batch[0].dict_['姓名'] + '等2員'
 
             mergefield_base.update({
                 'DOC_DATE': record_batch[0].doc_date,
@@ -202,15 +201,20 @@ class WordMerge(object):
                 mergefields.append(mergefield)
 
             elif format == WordMerge.FORMAL:
+                recipients = set()
                 for num_person in range(num_people):
                     record = record_batch[num_person]
+                    recipients.add(record.dict_['姓名'])
+                    recipients.add(record.dict_['中隊'])
+
+                for recipient in recipients:
                     mergefield = mergefield_base.copy()
                     mergefield.update({
                         'HEADER': '',
                         'ARCHIVE_CODE': '',
                         'ARCHIVE_YEARS': '',
                         'DRAFT': '',
-                        'RECIPIENT': record['姓名'],
+                        'RECIPIENT': recipient,
                     })
                     mergefields.append(mergefield)
 
@@ -233,38 +237,72 @@ class WordMerge(object):
         word_document.close()
 
 
+class Manager(object):
+    def __init__(self, config_path):
+        self.config = ConfigObj(config_path)
+        self.connection = pyodbc.connect(
+            driver='{Microsoft Access Driver (*.mdb, *.accdb)}',
+            dbq=self.config['資料庫'],
+        )
+
+        self.document = WordMerge(
+            template_path=self.config['模板'],
+            output_dir=self.config['輸出資料夾'],
+        )
+
+        if self.config['格式'] == '草稿':
+            self.format = WordMerge.DRAFT
+        elif self.config['格式'] == '正本':
+            self.format = WordMerge.FORMAL
+
+    def merge(self):
+        df = pd.read_sql(
+            (
+                'SELECT * FROM 列印查詢 '
+                'WHERE 案件編號 BETWEEN ? AND ?'
+            ),
+            params=[
+                self.config['案件編號範圍'][0],
+                self.config['案件編號範圍'][1],
+            ],
+            con=self.connection,
+            index_col='識別碼',
+            parse_dates=True,
+        )
+
+        with self.document:
+            cases = df.groupby('案件編號').groups
+
+            if self.format == WordMerge.DRAFT:
+                for (case_key, case_indices) in cases.items():
+                    case_records = [
+                        Record(series=df.loc[case_index])
+                        for case_index in case_indices
+                    ]
+
+                    mergefields = WordMerge.get_mergefields(case_records, format=self.format)
+                    filename = '{:d}_{:s}'.format(
+                        case_records[0].dict_['案件編號'],
+                        case_records[0].dict_['事由'],
+                    )
+                    self.document.merge(mergefields, filename=filename)
+                    print(filename)
+
+            elif self.format == WordMerge.FORMAL:
+                for (case_key, case_indices) in cases.items():
+                    case_records = [
+                        Record(series=df.loc[case_index])
+                        for case_index in case_indices
+                        ]
+
+                    mergefields = WordMerge.get_mergefields(case_records, format=self.format)
+                    filename = '{:d}_{:s}'.format(
+                        case_records[0].dict_['案件編號'],
+                        case_records[0].dict_['事由'],
+                    )
+                    self.document.merge(mergefields, filename=filename)
+                    print(filename)
+
 if __name__ == '__main__':
-    config = ConfigObj('config.cfg')
-
-    connection = pyodbc.connect(
-        driver='{Microsoft Access Driver (*.mdb, *.accdb)}',
-        dbq=config['資料庫'],
-    )
-
-    df = pd.read_sql(
-        (
-            'SELECT * FROM 列印查詢 '
-            'WHERE 案件編號 BETWEEN ? AND ?'
-        ),
-        params=[
-            config['案件編號'][0],
-            config['案件編號'][1],
-        ],
-        con=connection,
-        index_col='識別碼',
-        parse_dates=True,
-    )
-
-    document = WordMerge(
-        template_path=config['模板'],
-        output_dir=config['輸出資料夾'],
-    )
-
-    with document:
-        cases = df.groupby('案件編號').groups
-        for (case_key, case_indices) in cases.items():
-            case_df = df.loc[case_indices]
-            case_records = [Record(row) for (index, row) in case_df.iterrows()]
-
-            mergefields = WordMerge.get_mergefields(case_records, format=WordMerge.DRAFT)
-            document.merge(mergefields, filename='')
+    manager = Manager(config_path='config.cfg')
+    manager.merge()
