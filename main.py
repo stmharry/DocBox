@@ -204,6 +204,8 @@ class WordMerge(object):
                 recipients = set()
                 for num_person in range(num_people):
                     record = record_batch[num_person]
+                    # DEBUG # assert record.dict_['發文日期'] is not None and record.dict_['發文號'] != 0, '有未輸入發文資訊之紀錄！'
+
                     recipients.add(record.dict_['姓名'])
                     recipients.add(record.dict_['中隊'])
 
@@ -221,6 +223,8 @@ class WordMerge(object):
         return mergefields
 
     def merge(self, mergefields, filename):
+        print(filename)  # DEBUG
+
         path_prefix = os.path.join(
             self.output_dir,
             filename,
@@ -233,7 +237,7 @@ class WordMerge(object):
         word_template.write(word_path)
 
         word_document = self.word_app.documents.open(word_path)
-        word_document.SaveAs(pdf_path, FileFormat=17)  # magic 17 as pdf
+        word_document.saveas(pdf_path, FileFormat=17)  # magic 17 as pdf
         word_document.close()
 
 
@@ -286,22 +290,52 @@ class Manager(object):
                         case_records[0].dict_['事由'],
                     )
                     self.document.merge(mergefields, filename=filename)
-                    print(filename)
 
             elif self.format == WordMerge.FORMAL:
+                all_merge_fields = []
                 for (case_key, case_indices) in cases.items():
                     case_records = [
                         Record(series=df.loc[case_index])
                         for case_index in case_indices
-                        ]
+                    ]
 
                     mergefields = WordMerge.get_mergefields(case_records, format=self.format)
-                    filename = '{:d}_{:s}'.format(
-                        case_records[0].dict_['案件編號'],
-                        case_records[0].dict_['事由'],
-                    )
+                    all_merge_fields.extend(mergefields)
+
+                df_recipient = df[['姓名', '中隊']].drop_duplicates()
+                unique_names = df_recipient['姓名'].unique()
+                unique_teams = df_recipient['中隊'].unique()
+
+                mergefields_by_name = {
+                    name: []
+                    for name in unique_names
+                }
+                mergefields_by_team = {
+                    team: []
+                    for team in unique_teams
+                }
+
+                for mergefield in all_merge_fields:
+                    recipient = mergefield['RECIPIENT']
+                    if recipient in unique_teams:
+                        mergefield_list = mergefields_by_team[recipient]
+                    else:
+                        mergefield_list = mergefields_by_name[recipient]
+
+                    mergefield_list.append(mergefield)
+
+                # tidying
+
+                for team in unique_teams:
+                    mergefields = []
+                    for name in df_recipient.ix[df_recipient['中隊'] == team, '姓名']:
+                        mergefields.extend(mergefields_by_name[name])
+
+                    filename = '{:s}_人員獎懲'.format(team)
                     self.document.merge(mergefields, filename=filename)
-                    print(filename)
+
+                    # TODO
+
 
 if __name__ == '__main__':
     manager = Manager(config_path='config.cfg')
