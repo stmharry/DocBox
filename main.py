@@ -23,7 +23,7 @@ class Record(object):
     def __init__(self, series):
         self.dict_ = dict(zip(series.index, series))
 
-        if self.dict_['發文日期'] is None:
+        if self.dict_['發文日期'] is pd.NaT or self.dict_['發文日期'] is None:
             year = datetime.now().year
             month = None
             day = None
@@ -331,11 +331,12 @@ class Manager(object):
                     for name in df_recipient.ix[df_recipient['中隊'] == team, '姓名']:
                         mergefields.extend(mergefields_by_name[name])
 
-                    filename = '{:s}_人員獎懲'.format(team)
+                    filename = '{:s}_分表'.format(team)
                     self.document.merge(mergefields, filename=filename)
 
-                    # TODO
+                    # TODO: 總表
 
+# TODO: class DoubleSided()
 
 if __name__ == '__main__':
     manager = Manager(config_path='config.cfg')
