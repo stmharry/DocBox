@@ -3,12 +3,14 @@
 import os
 import pyodbc
 import pandas as pd
+import PyPDF2
 
 from comtypes.client import CreateObject
 from configobj import ConfigObj
 from datetime import datetime
 from itertools import zip_longest
 from mailmerge import MailMerge
+from natsort import natsorted
 
 
 class Record(object):
@@ -78,18 +80,8 @@ class WordMerge(object):
     DRAFT = 0
     FORMAL = 1
 
-    def __init__(self, template_path, output_dir):
+    def __init__(self, template_path):
         self.template_path = template_path
-        self.output_dir = output_dir
-        if not os.path.isdir(output_dir):
-            os.makedirs(output_dir)
-
-    def __enter__(self):
-        self.word_app = CreateObject('word.application')
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.word_app.quit()
 
     @staticmethod
     def get_mergefields(records, format):
@@ -223,23 +215,13 @@ class WordMerge(object):
 
         return pd.DataFrame(mergefields)
 
-    def merge(self, mergefields, filename):
-        print(filename)  # DEBUG
-
-        path_prefix = os.path.join(
-            self.output_dir,
-            filename,
-        )
-        word_path = '{:s}.docx'.format(path_prefix)
-        pdf_path = '{:s}.pdf'.format(path_prefix)
+    def merge(self, mergefields, word_path):
+        print('WordMerge.merge')
+        print(word_path)  # DEBUG
 
         word_template = MailMerge(self.template_path)
         word_template.merge_pages([mergefield._asdict() for mergefield in mergefields.itertuples()])
         word_template.write(word_path)
-
-        word_document = self.word_app.documents.open(word_path)
-        word_document.saveas(pdf_path, FileFormat=17)  # magic 17 as pdf
-        word_document.close()
 
 
 class Manager(object):
@@ -249,11 +231,14 @@ class Manager(object):
             driver='{Microsoft Access Driver (*.mdb, *.accdb)}',
             dbq=self.config['資料庫'],
         )
-
-        self.document = WordMerge(
+        self.word_merge = WordMerge(
             template_path=self.config['模板'],
-            output_dir=self.config['輸出資料夾'],
         )
+        self.double_sided = DoubleSided()
+
+        self.output_dir = self.config['輸出資料夾']
+        if not os.path.isdir(self.output_dir):
+            os.makedirs(self.output_dir)
 
         if self.config['格式'] == '草稿':
             self.format = WordMerge.DRAFT
@@ -275,61 +260,130 @@ class Manager(object):
             parse_dates=True,
         )
 
-        with self.document:
-            cases = df.groupby('案件編號').groups
+        cases = df.groupby('案件編號').groups
 
-            if self.format == WordMerge.DRAFT:
-                for (case_key, case_indices) in cases.items():
-                    case_records = [
-                        Record(series=df.loc[case_index])
-                        for case_index in case_indices
-                    ]
+        if self.format == WordMerge.DRAFT:
+            filepaths = []
+            for (case_key, case_indices) in cases.items():
+                case_records = [
+                    Record(series=df.loc[case_index])
+                    for case_index in case_indices
+                ]
 
-                    mergefields = WordMerge.get_mergefields(case_records, format=self.format)
-                    filename = '{:d}_{:s}'.format(
+                mergefields = WordMerge.get_mergefields(case_records, format=self.format)
+                filepath = os.path.join(
+                    self.output_dir,
+                    '{:d}_{:s}.docx'.format(
                         case_records[0].dict_['案件編號'],
                         case_records[0].dict_['事由'],
-                    )
-                    self.document.merge(mergefields, filename=filename)
+                    ),
+                )
+                self.word_merge.merge(mergefields, word_path=filepath)
+                filepaths.append(filepath)
 
-            elif self.format == WordMerge.FORMAL:
-                all_merge_fields = pd.DataFrame()
+            self.double_sided.merge(
+                natsorted(filepaths),
+                pdf_path=os.path.join(self.output_dir, '{:d}-{:d}.pdf'.format(min(cases.keys()), max(cases.keys()))),
+            )
+
+        elif self.format == WordMerge.FORMAL:
+            all_merge_fields = pd.DataFrame()
+            for (case_key, case_indices) in cases.items():
+                case_records = [
+                    Record(series=df.loc[case_index])
+                    for case_index in case_indices
+                ]
+
+                mergefields = WordMerge.get_mergefields(case_records, format=self.format)
+                all_merge_fields = all_merge_fields.append(mergefields, ignore_index=True)
+
+            df_recipient = df[['姓名', '中隊']].drop_duplicates()
+            indices_by_name = all_merge_fields.groupby('RECIPIENT').groups
+
+            # tidying
+
+            for team in df_recipient['中隊'].unique():
+                mergefields = pd.DataFrame()
+                for name in df_recipient.ix[df_recipient['中隊'] == team, '姓名']:
+                    mergefields = mergefields.append(all_merge_fields.loc[indices_by_name[name]])
+
+                filename = os.path.join(
+                    self.output_dir,
+                    '{:s}_個人'.format(team),
+                )
+                self.word_merge.merge(mergefields, word_path=filename + '.docx')
+                self.double_sided.merge(
+                    [filename + '.docx'],
+                    pdf_path=filename + '.pdf',
+                )
+
+                filepaths = []
+                team_merge_fields = all_merge_fields.loc[indices_by_name[team]]
+                cases = team_merge_fields.groupby('DOC_SERIAL_ALT').groups
                 for (case_key, case_indices) in cases.items():
-                    case_records = [
-                        Record(series=df.loc[case_index])
-                        for case_index in case_indices
-                    ]
+                    mergefields = team_merge_fields.loc[case_indices]
 
-                    mergefields = WordMerge.get_mergefields(case_records, format=self.format)
-                    all_merge_fields = all_merge_fields.append(mergefields, ignore_index=True)
+                    filepath = os.path.join(
+                        self.output_dir,
+                        '{:s}_總表_{:s}.docx'.format(team, case_key),
+                    )
+                    self.word_merge.merge(mergefields, word_path=filepath)
+                    filepaths.append(filepath)
 
-                df_recipient = df[['姓名', '中隊']].drop_duplicates()
-                unique_names = df_recipient['姓名'].unique()
-                unique_teams = df_recipient['中隊'].unique()
+                self.double_sided.merge(
+                    natsorted(filepaths),
+                    pdf_path=os.path.join(self.output_dir, '{:s}_總表.pdf'.format(team)),
+                )
 
-                indices_by_name = all_merge_fields.groupby('RECIPIENT').groups
 
-                # tidying
+class DoubleSided(object):
+    def __init__(self):
+        self.word_app = CreateObject('word.application')
 
-                for team in unique_teams:
-                    mergefields = pd.DataFrame()
-                    for name in df_recipient.ix[df_recipient['中隊'] == team, '姓名']:
-                        mergefields = mergefields.append(all_merge_fields.loc[indices_by_name[name]])
+    def merge(self, word_paths, pdf_path):
+        print('DoubleSided.merge')
+        print(word_paths)
+        print(pdf_path)
 
-                    filename = '{:s}_個人'.format(team)
-                    self.document.merge(mergefields, filename=filename)
+        if len(word_paths) == 1:
+            word_path = word_paths[0]
+            (basepath, _) = os.path.splitext(word_path)
 
-                    team_merge_fields = all_merge_fields.loc[indices_by_name[team]]
-                    cases = team_merge_fields.groupby('DOC_SERIAL_ALT').groups
-                    for (case_key, case_indices) in cases.items():
-                        mergefields = team_merge_fields.loc[case_indices]
-                        filename = '{:s}_{:s}'.format(team, case_key)
-                        self.document.merge(mergefields, filename=filename)
+            word_document = self.word_app.documents.open(word_path)
+            word_document.saveas(pdf_path, FileFormat=17)  # magic 17 as pdf
+            word_document.close()
+            os.remove(word_path)
+        else:
+            writer = PyPDF2.PdfFileWriter()
 
-                    # TODO: merge
+            fs = {}
+            for (num_path, word_path) in enumerate(word_paths):
+                (basepath, _) = os.path.splitext(word_path)
+                temp_pdf_path = '{:s}_temp.pdf'.format(basepath)
 
-# TODO: class DoubleSided()
+                word_document = self.word_app.documents.open(word_path)
+                word_document.saveas(temp_pdf_path, FileFormat=17)  # magic 17 as pdf
+                word_document.close()
+                os.remove(word_path)
+
+                f = open(temp_pdf_path, 'rb')
+                reader = PyPDF2.PdfFileReader(f)
+                writer.appendPagesFromReader(reader)
+
+                fs[temp_pdf_path] = f
+
+                if (reader.numPages % 2 == 1) and (num_path != len(word_paths) - 1):
+                    writer.addBlankPage()
+
+            with open(pdf_path, 'wb') as f:
+                writer.write(f)
+
+            for (path, f) in fs.items():
+                f.close()
+                os.remove(path)
 
 if __name__ == '__main__':
+    os.system('taskkill /f /im WINWORD.exe')
+
     manager = Manager(config_path='config.cfg')
     manager.merge()
