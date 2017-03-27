@@ -212,6 +212,7 @@ class WordMerge(object):
                 for recipient in recipients:
                     mergefield = mergefield_base.copy()
                     mergefield.update({
+                        'DOC_SERIAL_ALT': record_batch[0].doc_serial,
                         'HEADER': '',
                         'ARCHIVE_CODE': '',
                         'ARCHIVE_YEARS': '',
@@ -220,7 +221,7 @@ class WordMerge(object):
                     })
                     mergefields.append(mergefield)
 
-        return mergefields
+        return pd.DataFrame(mergefields)
 
     def merge(self, mergefields, filename):
         print(filename)  # DEBUG
@@ -233,7 +234,7 @@ class WordMerge(object):
         pdf_path = '{:s}.pdf'.format(path_prefix)
 
         word_template = MailMerge(self.template_path)
-        word_template.merge_pages(mergefields)
+        word_template.merge_pages([mergefield._asdict() for mergefield in mergefields.itertuples()])
         word_template.write(word_path)
 
         word_document = self.word_app.documents.open(word_path)
@@ -292,7 +293,7 @@ class Manager(object):
                     self.document.merge(mergefields, filename=filename)
 
             elif self.format == WordMerge.FORMAL:
-                all_merge_fields = []
+                all_merge_fields = pd.DataFrame()
                 for (case_key, case_indices) in cases.items():
                     case_records = [
                         Record(series=df.loc[case_index])
@@ -300,41 +301,32 @@ class Manager(object):
                     ]
 
                     mergefields = WordMerge.get_mergefields(case_records, format=self.format)
-                    all_merge_fields.extend(mergefields)
+                    all_merge_fields = all_merge_fields.append(mergefields, ignore_index=True)
 
                 df_recipient = df[['姓名', '中隊']].drop_duplicates()
                 unique_names = df_recipient['姓名'].unique()
                 unique_teams = df_recipient['中隊'].unique()
 
-                mergefields_by_name = {
-                    name: []
-                    for name in unique_names
-                }
-                mergefields_by_team = {
-                    team: []
-                    for team in unique_teams
-                }
-
-                for mergefield in all_merge_fields:
-                    recipient = mergefield['RECIPIENT']
-                    if recipient in unique_teams:
-                        mergefield_list = mergefields_by_team[recipient]
-                    else:
-                        mergefield_list = mergefields_by_name[recipient]
-
-                    mergefield_list.append(mergefield)
+                indices_by_name = all_merge_fields.groupby('RECIPIENT').groups
 
                 # tidying
 
                 for team in unique_teams:
-                    mergefields = []
+                    mergefields = pd.DataFrame()
                     for name in df_recipient.ix[df_recipient['中隊'] == team, '姓名']:
-                        mergefields.extend(mergefields_by_name[name])
+                        mergefields = mergefields.append(all_merge_fields.loc[indices_by_name[name]])
 
-                    filename = '{:s}_分表'.format(team)
+                    filename = '{:s}_個人'.format(team)
                     self.document.merge(mergefields, filename=filename)
 
-                    # TODO: 總表
+                    team_merge_fields = all_merge_fields.loc[indices_by_name[team]]
+                    cases = team_merge_fields.groupby('DOC_SERIAL_ALT').groups
+                    for (case_key, case_indices) in cases.items():
+                        mergefields = team_merge_fields.loc[case_indices]
+                        filename = '{:s}_{:s}'.format(team, case_key)
+                        self.document.merge(mergefields, filename=filename)
+
+                    # TODO: merge
 
 # TODO: class DoubleSided()
 
