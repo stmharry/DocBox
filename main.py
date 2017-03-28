@@ -64,7 +64,7 @@ class Record(object):
         else:
             self.doc_number = self.format('保七三大人字第{發文年份:d}{發文號:07d}號')
 
-        self.title = self.format('{姓名:s}（{身分證字號:s}）')
+        self.title = self.format('{姓名:s}（{星星身分證字號:s}）')
         self.position = self.format('現職：{單位:s}（{單位代碼:s}），{職稱:s}（{職稱代碼:s}），{官等:s}。')
         self.result = self.format('獎懲：{結果:s}（{結果代碼:s}）。')
         self.subject = self.format('獎懲事由：{事由:s}（{事由代碼:s}）。')
@@ -249,12 +249,9 @@ class Manager(object):
         df = pd.read_sql(
             (
                 'SELECT * FROM 列印查詢 '
-                'WHERE 案件編號 BETWEEN ? AND ?'
+                'WHERE ?'
             ),
-            params=[
-                self.config['案件編號範圍'][0],
-                self.config['案件編號範圍'][1],
-            ],
+            params=(self.config['範圍'],),
             con=self.connection,
             index_col='識別碼',
             parse_dates=True,
