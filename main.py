@@ -246,20 +246,22 @@ class Manager(object):
             self.format = WordMerge.FORMAL
 
     def merge(self):
-        df = pd.read_sql(
-            (
-                'SELECT * FROM 列印查詢 '
-                'WHERE ?'
-            ),
-            params=(self.config['範圍'],),
-            con=self.connection,
-            index_col='識別碼',
-            parse_dates=True,
-        )
-
-        cases = df.groupby('案件編號').groups
-
         if self.format == WordMerge.DRAFT:
+            df = pd.read_sql(
+                (
+                    'SELECT * FROM 列印查詢 '
+                    'WHERE (案件編號 BETWEEN ? AND ?) AND (發文日期 IS NULL)'
+                ),
+                params=(
+                    self.config['案件編號範圍'][0],
+                    self.config['案件編號範圍'][1],
+                ),
+                con=self.connection,
+                index_col='識別碼',
+                parse_dates=True,
+            )
+            cases = df.groupby('案件編號').groups
+
             filepaths = []
             for (case_key, case_indices) in cases.items():
                 case_records = [
@@ -284,6 +286,21 @@ class Manager(object):
             )
 
         elif self.format == WordMerge.FORMAL:
+            df = pd.read_sql(
+                (
+                    'SELECT * FROM 列印查詢 '
+                    'WHERE (案件編號 BETWEEN ? AND ?) AND (發文日期 IS NOT NULL) AND (註記 IS NOT TRUE)'
+                ),
+                params=(
+                    self.config['案件編號範圍'][0],
+                    self.config['案件編號範圍'][1],
+                ),
+                con=self.connection,
+                index_col='識別碼',
+                parse_dates=True,
+            )
+            cases = df.groupby('案件編號').groups
+
             all_merge_fields = pd.DataFrame()
             for (case_key, case_indices) in cases.items():
                 case_records = [
@@ -361,7 +378,7 @@ class DoubleSided(object):
                 word_document = self.word_app.documents.open(word_path)
                 word_document.saveas(temp_pdf_path, FileFormat=17)  # magic 17 as pdf
                 word_document.close()
-                os.remove(word_path)
+                # os.remove(word_path)
 
                 f = open(temp_pdf_path, 'rb')
                 reader = PyPDF2.PdfFileReader(f)
