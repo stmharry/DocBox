@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
 import os
 import pyodbc
@@ -289,7 +289,7 @@ class Manager(object):
             df = pd.read_sql(
                 (
                     'SELECT * FROM 列印查詢 '
-                    'WHERE (案件編號 BETWEEN ? AND ?) AND (發文日期 IS NOT NULL) AND (註記 IS NOT TRUE)'
+                    'WHERE (案件編號 BETWEEN ? AND ?) AND NOT(ISNULL(發文日期)) AND (註記 = FALSE)'
                 ),
                 params=(
                     self.config['案件編號範圍'][0],
