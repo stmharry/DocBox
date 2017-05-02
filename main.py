@@ -205,10 +205,6 @@ class WordMerge(object):
                     mergefield = mergefield_base.copy()
                     mergefield.update({
                         'DOC_SERIAL_ALT': record_batch[0].doc_serial,
-                        'HEADER': '',
-                        'ARCHIVE_CODE': '',
-                        'ARCHIVE_YEARS': '',
-                        'DRAFT': '',
                         'RECIPIENT': recipient,
                     })
                     mergefields.append(mergefield)
@@ -232,7 +228,10 @@ class Manager(object):
             dbq=self.config['資料庫'],
         )
         self.word_merge = WordMerge(
-            template_path=self.config['模板'],
+            template_path=os.path.join(
+                self.config['模板資料夾'],
+                '{:s}.docx'.format(self.config['格式']),
+            ),
         )
         self.double_sided = DoubleSided()
 
