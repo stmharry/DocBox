@@ -398,5 +398,5 @@ class DoubleSided(object):
 if __name__ == '__main__':
     os.system('taskkill /f /im WINWORD.exe')
 
-    manager = Manager(config_path='config.cfg')
+    manager = Manager(config_path=os.path.join(os.path.dirname(__file__), 'config.cfg'))
     manager.merge()
