@@ -59,7 +59,7 @@ class Record(object):
         self.archive_years = '3'
         self.doc_date = self.format('中華民國{民國發文日期:s}')
 
-        if self.dict_['發文號'] == 0:
+        if (self.dict_['發文號'] is None) or (self.dict_['發文號'] == 0):
             self.doc_number = self.format('保七三大人字第{發文年份:d}000     號')
         else:
             self.doc_number = self.format('保七三大人字第{發文年份:d}{發文號:07d}號')
